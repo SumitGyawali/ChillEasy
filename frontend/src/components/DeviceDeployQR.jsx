@@ -39,8 +39,19 @@ export default function DeviceDeployQR() {
   const apiBase = process.env.REACT_APP_BACKEND_URL;
   const [wifiSSID, setWifiSSID] = useState('');
   const [wifiPass, setWifiPass] = useState('');
-  const [token, setToken] = useState(() => `vx-${Math.random().toString(36).slice(2, 10)}`);
+  const [token, setToken] = useState(() => {
+    // Crypto-grade 256-bit hex token (replaces Math.random())
+    const buf = new Uint8Array(32);
+    (window.crypto || window.msCrypto).getRandomValues(buf);
+    return Array.from(buf).map((b) => b.toString(16).padStart(2, '0')).join('');
+  });
   const [copied, setCopied] = useState(false);
+
+  const regenerateToken = () => {
+    const buf = new Uint8Array(32);
+    (window.crypto || window.msCrypto).getRandomValues(buf);
+    setToken(Array.from(buf).map((b) => b.toString(16).padStart(2, '0')).join(''));
+  };
 
   const payload = useMemo(() => buildPayload({
     deviceId: settings.device.id,
@@ -59,8 +70,6 @@ export default function DeviceDeployQR() {
       toast.success('Payload copied');
     } catch { toast.error('Clipboard blocked'); }
   };
-
-  const regenerateToken = () => setToken(`vx-${Math.random().toString(36).slice(2, 10)}`);
 
   return (
     <Dialog>

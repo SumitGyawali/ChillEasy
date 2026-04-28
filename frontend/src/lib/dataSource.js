@@ -179,7 +179,7 @@ export class HTTPDeviceAdapter {
 
   async _poll() {
     try {
-      const { data } = await axios.get(`${API}/devices/${this.deviceId}/telemetry?limit=50`);
+    const { data } = await axios.get(`${API}/devices/${this.deviceId}/telemetry?limit=50`);
       const fresh = (data || []).filter((p) => new Date(p.timestamp).getTime() > this._lastTs);
       if (fresh.length) {
         this._lastTs = new Date(fresh[fresh.length - 1].timestamp).getTime();

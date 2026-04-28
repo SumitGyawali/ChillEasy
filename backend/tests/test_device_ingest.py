@@ -143,14 +143,14 @@ class TestCommands:
         r = client.get(f"{API}/devices/{device_id}/status", timeout=30)
         assert r.json()["pending_commands"] >= 2
 
-        # consume=true (default): returns then marks consumed
-        r = client.get(f"{API}/devices/{device_id}/commands", timeout=30)
+        # /commands/poll consumes (NodeMCU long-poll endpoint)
+        r = client.get(f"{API}/devices/{device_id}/commands/poll", timeout=30)
         assert r.status_code == 200
         first = r.json()["commands"]
         assert len(first) >= 2
 
         # second poll should return empty
-        r = client.get(f"{API}/devices/{device_id}/commands", timeout=30)
+        r = client.get(f"{API}/devices/{device_id}/commands/poll", timeout=30)
         assert r.status_code == 200
         assert r.json()["commands"] == []
 

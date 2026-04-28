@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 4 — P3 backlog (crypto-grade provisioning token, dual auth Emergent OAuth + JWT, /commands/poll consuming + /commands non-consuming preview). Backend: 39/39 pytest passed (added 19 new tests across register/login/me/cookie-session/expired-session/logout/Emergent-error-path/provisioning-mint/verify/tamper/expired-signature/poll-vs-commands/legacy-consume; updated existing test_device_ingest.test_enqueue_and_consume to use /commands/poll for the consuming path). Frontend: full auth flow validated end-to-end — unauthenticated visit redirects to /login; QA login mints JWT (vxc_jwt) of length 163 in localStorage; refresh keeps user logged in; logout clears JWT and returns to /login. Register page renders all 5 testids (google + name + email + password + submit) and a unique email registers + redirects to dashboard. DeviceDeployQR token is now 64-char lowercase hex (crypto.getRandomValues); regenerate produces a different 64-hex token AND QR SVG re-renders. Mobile (390px) login renders without horizontal overflow and all testids visible; mobile login lands on dashboard with user-menu-btn.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Live Monitor (initial load before any telemetry)", "issues": ["Recharts emits 'width(-1)/height(-1)' warnings on first paint when container has 0×0 size; cosmetic only, no visual breakage. Consider giving the chart container an explicit minHeight/aspect."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_p3_auth_provisioning.py",
+    "/app/backend/tests/test_device_ingest.py",
+    "/app/backend/tests/test_p1_hardening.py",
+    "/app/backend/tests/test_vaxchain_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Re-enable Pydantic EmailStr in production for RegisterPayload/LoginPayload (currently relaxed to plain str so '.test' TLDs work in QA).",
+    "(Optional) Replace `return sid` in test_vaxchain_api.test_session_full_lifecycle with assertion to silence PytestReturnNotNoneWarning (pre-existing, not introduced this iteration).",
+    "(Optional) Fix Recharts 0×0 container warning on initial Live Monitor render."
+  ],
+  "critical_code_review_comments": [
+    "auth.py make_auth_dep: cookie session branch dereferences `exp.tzinfo` without checking that `exp` is not None — if expires_at is missing in DB, a NoneType.tzinfo AttributeError would 500. Low risk because all writes set expires_at, but defensive guard would be safer.",
+    "auth.py emergent_session uses `session_token = data.get('session_token') or secrets.token_urlsafe(32)` — when Emergent returns no session_token we mint our own (good), but cookie max_age is hardcoded to 7d while expires_at row uses the same 7d. Consider centralising the TTL constant.",
+    "server.py lifespan imports `from auth import hash_password` lazily inside the function — works, but a top-level import keeps startup readable; also note `password_hash` is correctly excluded from User model via projection, but the User pydantic model has `extra='ignore'` which silently drops it — explicit projection is the belt-and-braces approach and is being used (good).",
+    "Provisioning verify path: signature is correctly compared with hmac.compare_digest (timing-safe). The 'expired' test path actually exercises the signature-mismatch branch because client cannot re-sign without PROVISIONING_SECRET. The pure 'expired but valid signature' branch is only reachable via TTL elapsed at runtime — acceptable; covered by code review.",
+    "Frontend AuthContext stores JWT in localStorage which is XSS-readable. For higher-security deployments, prefer httpOnly cookie (already used for Emergent). Document this trade-off."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_p3_auth_provisioning.py (new — 19 tests)",
+    "/app/backend/tests/test_device_ingest.py (updated test_enqueue_and_consume to use /commands/poll for consuming path)"
+  ],
+  "success_rate": {"backend": "100% (39/39 pytest)", "frontend": "100% (login, register, refresh, logout, QR token, mobile)"},
+  "test_credentials": "qa@vaxchain.test / Passw0rd! (pre-seeded in lifespan)",
+  "seed_data_creation": "Tests created several TEST_-prefixed users (test_*@vaxchain.test, newreg_*@vaxchain.test) via /api/auth/register, plus TEST_sess_* user_sessions rows (cleaned up in finally), plus TEST-dev-* device docs and provisioning tokens. All namespaced and safe to leave in dev DB.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter4 P3 features fully validated. Auth dual-mode confirmed working: (a) JWT bearer via /api/auth/login → Authorization: Bearer <token> + localStorage.vxc_jwt on FE; (b) cookie session via mongosh-seeded user_sessions row (set expires_at past for 401 path; happy path returns user). Emergent /api/auth/session full happy path NOT testable headlessly — only error path (invalid session_id → 401, missing → 400) covered. Provisioning: token=64-char lowercase hex from secrets.token_hex(32); HMAC-SHA256 signature ties device_id|token|expires_at; tamper or expiry → 401. Command poll: GET /api/devices/{id}/commands/poll consumes, GET /api/devices/{id}/commands defaults consume=False (non-consuming preview), ?consume=true preserves legacy back-compat consumption. FE testids confirmed: login-page, login-email, login-password, login-submit-btn, register-google-btn, register-name, register-email, register-password, register-submit-btn, user-menu-btn, logout-btn, device-deploy-btn, deploy-token, deploy-token-regen, deploy-qr-canvas. To reproduce: `cd /app && REACT_APP_BACKEND_URL=https://chill-guard.preview.emergentagent.com MONGO_URL=mongodb://localhost:27017 DB_NAME=test_database python -m pytest backend/tests/ -v`.",
+  "rca of the issue": "N/A — no bugs found. All P3 features (crypto-grade token, dual auth, /poll vs /commands semantics) work as specified. One pre-existing Recharts cosmetic warning unrelated to P3."
+}

@@ -133,22 +133,39 @@ DEFAULT_VACCINES = [
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Seed vaccines
     if await db.vaccines.count_documents({}) == 0:
         await db.vaccines.insert_many([dict(v) for v in DEFAULT_VACCINES])
-    # Indexes for hot query paths
+    # Seed QA test user (idempotent)
+    if not await db.users.find_one({"email": "qa@vaxchain.test"}):
+        from auth import hash_password
+        import uuid as _uuid
+        await db.users.insert_one({
+            "user_id": f"user_{_uuid.uuid4().hex[:12]}",
+            "email": "qa@vaxchain.test",
+            "name": "QA",
+            "auth_provider": "password",
+            "password_hash": hash_password("Passw0rd!"),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
     await db.telemetry.create_index([("session_id", 1), ("timestamp", 1)])
     await db.alerts.create_index([("session_id", 1), ("timestamp", -1)])
     await db.sessions.create_index([("started_at", -1)])
     await db.device_telemetry.create_index([("device_id", 1), ("timestamp", -1)])
     await db.device_commands.create_index([("device_id", 1), ("consumed", 1), ("created_at", 1)])
     await db.devices.create_index([("id", 1)], unique=True)
+    await db.users.create_index([("email", 1)], unique=True)
+    await db.user_sessions.create_index([("session_token", 1)], unique=True)
     yield
     client.close()
 
 
 app = FastAPI(title="VaxChain Monitor API", lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
+
+# Auth + provisioning
+from auth import build_auth_router, provisioning_router
+app.include_router(build_auth_router(db))
+app.include_router(provisioning_router)
 
 
 # ===================== Routes =====================
@@ -299,12 +316,26 @@ async def enqueue_command(device_id: str, cmd: DeviceCommand):
 
 
 @api_router.get("/devices/{device_id}/commands")
-async def fetch_commands(device_id: str, consume: bool = True):
+async def fetch_commands(device_id: str, consume: bool = False):
+    """Non-consuming preview by default. NodeMCU should call /commands/poll instead."""
     cur = db.device_commands.find(
         {"device_id": device_id, "consumed": False}, {"_id": 0}
     ).sort("created_at", 1)
     docs = await cur.to_list(50)
     if consume and docs:
+        ids = [d["id"] for d in docs]
+        await db.device_commands.update_many({"id": {"$in": ids}}, {"$set": {"consumed": True}})
+    return {"commands": docs}
+
+
+@api_router.get("/devices/{device_id}/commands/poll")
+async def poll_commands(device_id: str):
+    """NodeMCU long-poll endpoint — consumes pending commands atomically."""
+    cur = db.device_commands.find(
+        {"device_id": device_id, "consumed": False}, {"_id": 0}
+    ).sort("created_at", 1)
+    docs = await cur.to_list(50)
+    if docs:
         ids = [d["id"] for d in docs]
         await db.device_commands.update_many({"id": {"$in": ids}}, {"$set": {"consumed": True}})
     return {"commands": docs}

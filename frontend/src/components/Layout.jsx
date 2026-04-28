@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Activity, AlertTriangle, MapPin, Compass, FileText, Settings, Menu, X, Power, Beaker } from 'lucide-react';
+import { Activity, AlertTriangle, MapPin, Compass, FileText, Settings, Menu, X, Power, Beaker, LogOut, User as UserIcon } from 'lucide-react';
 import { useSession } from '../context/SessionContext';
+import { useAuth } from '../context/AuthContext';
 import { Button } from './ui/button';
 import { Toaster } from 'sonner';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from './ui/dropdown-menu';
 
 const NAV = [
   { to: '/', label: 'Live Monitor', icon: Activity, testid: 'nav-monitor' },
@@ -16,6 +18,7 @@ const NAV = [
 
 export default function Layout({ children }) {
   const { session, running, startSession, stopSession, latest, alerts, linkStatus } = useSession();
+  const { user, logout } = useAuth();
   const location = useLocation();
   const [open, setOpen] = useState(false);
 
@@ -94,6 +97,28 @@ export default function Layout({ children }) {
                 <Power size={14} className="mr-1.5" /> Stop
               </Button>
             )}
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button data-testid="user-menu-btn" className="ml-1 flex items-center gap-2 px-2 py-1 rounded border" style={{ borderColor: 'var(--vx-border)' }}>
+                  {user?.picture ? (
+                    <img src={user.picture} alt="" className="w-6 h-6 rounded-full" />
+                  ) : (
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ background: 'rgba(59,139,212,0.15)' }}>
+                      <UserIcon size={12} style={{ color: 'var(--vx-primary)' }} />
+                    </div>
+                  )}
+                  <span className="hidden md:inline text-xs vx-mono max-w-[120px] truncate" style={{ color: 'var(--vx-text-dim)' }}>{user?.name || user?.email || '—'}</span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="bg-[#161A22] border-[#232B36] text-white">
+                <DropdownMenuLabel className="text-xs vx-mono" style={{ color: 'var(--vx-text-dim)' }}>{user?.email}</DropdownMenuLabel>
+                <DropdownMenuSeparator className="bg-[#232B36]" />
+                <DropdownMenuItem data-testid="logout-btn" onClick={logout} className="text-[#E24B4A] focus:bg-[#E24B4A]/10 focus:text-[#E24B4A] cursor-pointer">
+                  <LogOut size={14} className="mr-2" /> Log out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </header>

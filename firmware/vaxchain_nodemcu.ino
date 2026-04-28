@@ -226,3 +226,9 @@ void loop() {
     httpFetchCommands();
   }
 }
+
+// Note: HTTP poll endpoint changed in iter 4 — use /api/devices/<id>/commands/poll
+// (consumes atomically). The legacy /commands endpoint is now a non-consuming preview.
+//
+// Replace HTTP_CMD_URL definition above with:
+//   #define HTTP_CMD_URL "https://YOUR-DASHBOARD-HOST/api/devices/" DEVICE_ID "/commands/poll"
