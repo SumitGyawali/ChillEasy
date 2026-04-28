@@ -16,8 +16,9 @@ const DEFAULTS = {
   setpointC: 5,
   unit: 'C',
   thresholds: { tempLow: 2, tempHigh: 8, rateLimit: 0.5, potencyMin: 80, batteryLow: 20 },
-  geofence: { lat: 13.005, lng: 77.632, radiusM: 800 },
-  mqtt: { url: 'wss://broker.hivemq.com:8884/mqtt', topic: 'vaxchain/telemetry' },
+  geofence: { lat: 13.005, lng: 77.632, radiusM: 800, enabled: false },
+  mqtt: { url: 'wss://broker.hivemq.com:8884/mqtt', topicPrefix: 'vaxchain' },
+  device: { id: 'vx-001' },
   mlIntervalMin: 5,
 };
 
@@ -38,6 +39,7 @@ export function SessionProvider({ children }) {
   const [alerts, setAlerts] = useState([]);
   const [ml, setMl] = useState(null);
   const [running, setRunning] = useState(false);
+  const [linkStatus, setLinkStatus] = useState({ status: 'idle', online: false });
 
   const sourceRef = useRef(null);
   const sessionRef = useRef(null);
@@ -154,9 +156,9 @@ export function SessionProvider({ children }) {
 
     if (vac && newPotency < vac.min_potency_pct) raiseAlert('POTENCY_CRITICAL', 'critical', `Potency below ${vac.min_potency_pct}%: ${newPotency.toFixed(1)}%`, { potency: newPotency });
 
-    // Geofence check
+    // Geofence check (only when explicitly enabled)
     const gf = settings.geofence;
-    if (gf && gf.radiusM > 0) {
+    if (gf && gf.enabled && gf.radiusM > 0) {
       const d = haversine(p.lat, p.lng, gf.lat, gf.lng);
       if (d > gf.radiusM) raiseAlert('GEOFENCE_EXIT', 'warning', `Off-route: ${(d/1000).toFixed(2)}km from destination`);
     }
@@ -221,17 +223,25 @@ export function SessionProvider({ children }) {
     setTelemetry([]);
     setAlerts([]);
     setMl(null);
-    sourceRef.current = createDataSource(settings.source, { setpointC: settings.setpointC, intervalMs: 3000 });
+    sourceRef.current = createDataSource(settings.source, {
+      setpointC: settings.setpointC,
+      intervalMs: 3000,
+      url: settings.mqtt.url,
+      topicPrefix: settings.mqtt.topicPrefix,
+      deviceId: settings.device.id,
+    });
     sourceRef.current.on(handlePoint);
+    if (sourceRef.current.onStatus) sourceRef.current.onStatus(setLinkStatus);
     sourceRef.current.start();
     setRunning(true);
-    toast.success('Session started', { description: `Monitoring ${activeVaccine.name}` });
+    toast.success('Session started', { description: `Monitoring ${activeVaccine.name} via ${settings.source}` });
   }, [running, activeVaccine, vaccineId, settings, handlePoint]);
 
   const stopSession = useCallback(async () => {
     sourceRef.current?.stop();
     sourceRef.current = null;
     setRunning(false);
+    setLinkStatus({ status: 'idle', online: false });
     if (sessionRef.current?.id) {
       const tel = telemRef.current;
       const summary = tel.length ? {
@@ -258,6 +268,17 @@ export function SessionProvider({ children }) {
     }
   }, []);
 
+  const sendCommand = useCallback(async (type, value = null) => {
+    if (!sourceRef.current?.publishCommand) {
+      toast.error('No active link. Start session first.');
+      return false;
+    }
+    const ok = await Promise.resolve(sourceRef.current.publishCommand(type, value));
+    if (ok) toast.success(`Command sent: ${type}${value !== null ? ` = ${value}` : ''}`);
+    else toast.error(`Command failed: ${type}`);
+    return ok;
+  }, []);
+
   // Derived metrics
   const latest = telemetry[telemetry.length - 1] || null;
   const exposure = useMemo(() => cumulativeExposure(telemetry, settings.thresholds.tempHigh), [telemetry, settings.thresholds.tempHigh]);
@@ -275,7 +296,7 @@ export function SessionProvider({ children }) {
     telemetry, latest,
     alerts, dismissAlert, raiseAlert,
     ml, exposure, viability,
-    startSession, stopSession, triggerExcursion,
+    startSession, stopSession, triggerExcursion, sendCommand, linkStatus,
   };
 
   return <SessionCtx.Provider value={value}>{children}</SessionCtx.Provider>;

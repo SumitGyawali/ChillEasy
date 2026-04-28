@@ -209,6 +209,97 @@ async def dismiss_alert(alert_id: str):
     return res
 
 
+# ===================== Device ingest + commands (HTTP fallback for NodeMCU) =====================
+
+class DeviceCommand(BaseModel):
+    type: str
+    value: Optional[Any] = None
+
+
+class IngestPayload(BaseModel):
+    sensor1: float
+    sensor2: float
+    pwm_pct: float
+    battery_pct: float
+    lat: float
+    lng: float
+    timestamp: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+@api_router.post("/ingest/{device_id}")
+async def ingest_device(device_id: str, payload: IngestPayload):
+    """NodeMCU posts telemetry directly here when MQTT is unavailable."""
+    doc = payload.model_dump()
+    doc["device_id"] = device_id
+    if not doc.get("timestamp"):
+        doc["timestamp"] = datetime.now(timezone.utc).isoformat()
+    await db.device_telemetry.insert_one(doc)
+    # Mirror into session telemetry collection too if session_id provided
+    if doc.get("session_id"):
+        sdoc = {k: v for k, v in doc.items() if k != "device_id"}
+        await db.telemetry.insert_one(sdoc)
+    # Update device "seen" presence
+    await db.devices.update_one(
+        {"id": device_id},
+        {"$set": {"id": device_id, "last_seen": doc["timestamp"], "last_payload": payload.model_dump()}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@api_router.get("/devices/{device_id}/telemetry", response_model=List[IngestPayload])
+async def device_telemetry(device_id: str, limit: int = 500):
+    docs = await db.device_telemetry.find(
+        {"device_id": device_id}, {"_id": 0, "device_id": 0}
+    ).sort("timestamp", -1).to_list(limit)
+    return list(reversed(docs))
+
+
+@api_router.post("/devices/{device_id}/commands")
+async def enqueue_command(device_id: str, cmd: DeviceCommand):
+    """UI enqueues a command for the NodeMCU device."""
+    doc = {
+        "id": str(uuid.uuid4()),
+        "device_id": device_id,
+        "type": cmd.type,
+        "value": cmd.value,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "consumed": False,
+    }
+    await db.device_commands.insert_one(doc)
+    return {"id": doc["id"], "queued": True}
+
+
+@api_router.get("/devices/{device_id}/commands")
+async def fetch_commands(device_id: str, consume: bool = True):
+    """NodeMCU polls this. With consume=true, marks returned commands as consumed."""
+    cur = db.device_commands.find(
+        {"device_id": device_id, "consumed": False}, {"_id": 0}
+    ).sort("created_at", 1)
+    docs = await cur.to_list(50)
+    if consume and docs:
+        ids = [d["id"] for d in docs]
+        await db.device_commands.update_many(
+            {"id": {"$in": ids}}, {"$set": {"consumed": True}}
+        )
+    return {"commands": docs}
+
+
+@api_router.get("/devices/{device_id}/status")
+async def device_status(device_id: str):
+    d = await db.devices.find_one({"id": device_id}, {"_id": 0})
+    pending = await db.device_commands.count_documents({"device_id": device_id, "consumed": False})
+    online = False
+    if d and d.get("last_seen"):
+        try:
+            last = datetime.fromisoformat(d["last_seen"].replace("Z", "+00:00"))
+            online = (datetime.now(timezone.utc) - last).total_seconds() < 60
+        except Exception:
+            pass
+    return {"device_id": device_id, "online": online, "info": d, "pending_commands": pending}
+
+
 app.include_router(api_router)
 
 app.add_middleware(
