@@ -1,0 +1,98 @@
+{
+  "project_name": "VaxChain Monitor",
+  "theme": "dark",
+  "archetype": "Archetype 4 (Swiss & High-Contrast) / Tactical Hybrid",
+  "emotion": "Authoritative, precise, mission-critical, instrument-panel",
+  "colors": {
+    "background": "#0D0F14",
+    "surface": "#161A22",
+    "surface_hover": "#1E2430",
+    "primary": "#3B8BD4",
+    "warning": "#EF9F27",
+    "critical": "#E24B4A",
+    "success": "#1D9E75",
+    "text_primary": "#F8FAFC",
+    "text_secondary": "#94A3B8",
+    "border": "#232B36"
+  },
+  "typography": {
+    "heading_font": "Barlow, sans-serif",
+    "body_font": "IBM Plex Sans, sans-serif",
+    "mono_font": "JetBrains Mono, monospace",
+    "scales": {
+      "h1": "text-3xl md:text-4xl tracking-tighter font-medium",
+      "h2": "text-2xl md:text-3xl tracking-tight font-medium",
+      "h3": "text-xl md:text-2xl tracking-tight",
+      "metric": "text-4xl md:text-5xl font-semibold tracking-tighter text-white",
+      "label": "text-xs uppercase tracking-[0.2em] text-[#94A3B8]",
+      "body": "text-sm md:text-base leading-relaxed text-[#94A3B8]"
+    }
+  },
+  "layout": {
+    "strategy": "The 'Control Room' Grid (Mode B)",
+    "container": "w-full min-h-screen bg-[#0D0F14] text-white p-2 md:p-4 lg:p-6",
+    "spacing": "gap-4 md:gap-6",
+    "card": "bg-[#161A22] border border-[#232B36] rounded-md p-4 md:p-6 flex flex-col",
+    "glassmorphism": "backdrop-blur-xl bg-[#161A22]/80 border-b border-[#232B36]"
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#3B8BD4] text-white hover:bg-[#2A75B8] rounded-sm px-4 py-2 font-medium transition-colors",
+      "outline": "border border-[#232B36] text-[#94A3B8] hover:text-white hover:bg-[#1E2430] rounded-sm px-4 py-2 transition-colors",
+      "danger": "bg-transparent border border-[#E24B4A]/50 text-[#E24B4A] hover:bg-[#E24B4A]/10 rounded-sm px-4 py-2"
+    },
+    "gauges": {
+      "circular_temp": "Custom SVG or Recharts radial bar. Base track #232B36, value track dynamically colored (green/amber/red). Include a centered large metric readout.",
+      "potency_arc": "Semi-circle SVG gauge. Gradient from #1D9E75 to #E24B4A, representing viable vs. degraded states."
+    },
+    "charts": {
+      "library": "Recharts",
+      "styling": "Dark grid lines (stroke: #232B36), transparent backgrounds. Tooltips must use #161A22 background with #232B36 border and white text. For the 60-min temp chart, use <ReferenceArea> to shade the 2-8°C safe band in subtle green (#1D9E75 with low opacity). For TF.js regression, use <Area> for confidence bands with 0.1 opacity."
+    },
+    "maps": {
+      "library": "react-leaflet",
+      "styling": "Use CartoDB Dark Matter tile layer: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'. Markers should be custom divIcons utilizing Tailwind's ping/pulse animations for a radar-like feel."
+    },
+    "status_indicators": {
+      "live_dot": "w-2 h-2 rounded-full animate-pulse",
+      "badge": "px-2 py-1 rounded-sm text-xs font-mono border"
+    }
+  },
+  "motion": {
+    "transitions": "transition-all duration-200 ease-in-out",
+    "pulse": "animate-pulse (vital for all live data indicators to simulate active monitoring)",
+    "chart_animation": "true, duration: 500ms"
+  },
+  "accessibility": {
+    "focus_states": "focus:outline-none focus:ring-2 focus:ring-[#3B8BD4]/50 focus:border-[#3B8BD4]",
+    "contrast": "Ensure minimum 4.5:1 ratio for text against #161A22.",
+    "aria": "Use aria-live='polite' for live metric updates and Sonner toast notifications."
+  },
+  "testing": {
+    "data_testid_rules": "All interactive elements MUST include a 'data-testid' attribute (e.g., data-testid='vaccine-selector', data-testid='export-csv-btn', data-testid='temp-gauge')."
+  },
+  "media": {
+    "image_urls": [
+      {
+        "url": "https://images.unsplash.com/photo-1762279389042-9439bfb6c155?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "description": "Abstract neon lines forming a digital landscape",
+        "category": "auth_background"
+      },
+      {
+        "url": "https://images.pexels.com/photos/4884210/pexels-photo-4884210.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "WHO emblem sticker",
+        "category": "placeholder_logo"
+      }
+    ],
+    "icons_library": "@phosphor-icons/react"
+  },
+  "instructions_to_main_agent": [
+    "INSTALL DEPENDENCIES: yarn add recharts leaflet react-leaflet @tensorflow/tfjs @phosphor-icons/react clsx tailwind-merge framer-motion sonner",
+    "Do NOT use HTML-based components for advanced user interactions. Heavily customize Shadcn components to fit the 1px border, flat card, control-room aesthetic.",
+    "The layout MUST use CSS Grid (e.g., grid-cols-1 md:grid-cols-3 lg:grid-cols-4) with Mode B 'Control Room' rules.",
+    "Include 'data-testid' on all buttons, select inputs, tabs, and major cards.",
+    "Integrate Web Audio API for a subtle ping on critical alerts, paired with a Sonner toast notification.",
+    "Ensure 'Inter', 'Roboto', 'Open Sans', 'Lato', 'Syne', and 'Space Grotesk' are NOT used. Apply 'Barlow' for headings and 'IBM Plex Sans' for body text via Google Fonts.",
+    "Borders should be solid and thin (1px). Remove any Shadcn default soft shadows, replacing them with sharp flat design elements."
+  ]
+}
