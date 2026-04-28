@@ -208,14 +208,82 @@ export class HTTPDeviceAdapter {
   stop() { if (this._timer) clearInterval(this._timer); this._timer = null; this._setStatus({ status: 'stopped', online: false }); }
 }
 
-// Firebase adapter slot (future).
+// Firebase Realtime DB adapter — live telemetry + bidirectional commands.
+// RTDB schema:
+//   devices/{deviceId}/telemetry/live   - object overwritten each tick (matches NodeMCU schema)
+//   devices/{deviceId}/telemetry/history/<pushId> - optional history log
+//   devices/{deviceId}/cmd/<pushId>     - UI publishes commands here, NodeMCU reads + deletes
+//   devices/{deviceId}/status           - { online, last_seen }
+//
+// REQUIRED in Firebase Console:
+//   1. Authentication → Sign-in method → enable "Anonymous"
+//   2. Realtime Database → Rules: at minimum allow auth!=null read/write under /devices.
+//
+// NodeMCU side: use the Firebase-ESP-Client library OR keep MQTT/HTTP and let a backend
+// bridge mirror to RTDB. The reference firmware can do either; toggle USE_FIREBASE in the .ino.
+import { ref, onValue, off, set, push, serverTimestamp } from 'firebase/database';
+import { getFirebase, isFirebaseConfigured, ensureAuth } from './firebaseClient';
+
 export class FirebaseAdapter {
-  constructor(config) { this.config = config; this._listeners = new Set(); this._statusListeners = new Set(); }
+  constructor({ deviceId = 'vx-001' } = {}) {
+    this.deviceId = deviceId;
+    this._listeners = new Set();
+    this._statusListeners = new Set();
+    this._unsub = null;
+    this._unsubStatus = null;
+    this._status = { status: 'idle', online: false };
+  }
   on(cb) { this._listeners.add(cb); return () => this._listeners.delete(cb); }
-  onStatus(cb) { this._statusListeners.add(cb); cb({ status: 'pending', online: false }); return () => this._statusListeners.delete(cb); }
-  start() { /* TODO: initializeApp + onValue */ }
-  publishCommand() { return false; }
-  stop() {}
+  onStatus(cb) { this._statusListeners.add(cb); cb(this._status); return () => this._statusListeners.delete(cb); }
+  _setStatus(s) { this._status = s; this._statusListeners.forEach((cb) => cb(s)); }
+
+  async start() {
+    if (!isFirebaseConfigured()) {
+      this._setStatus({ status: 'error', online: false, error: 'Firebase env vars missing' });
+      return;
+    }
+    this._setStatus({ status: 'connecting', online: false });
+    try {
+      await ensureAuth();
+    } catch (e) {
+      this._setStatus({ status: 'error', online: false, error: `auth: ${e?.message || e}` });
+      return;
+    }
+    const fb = getFirebase();
+    const liveRef = ref(fb.db, `devices/${this.deviceId}/telemetry/live`);
+    const statusRef = ref(fb.db, `devices/${this.deviceId}/status`);
+    this._unsub = onValue(liveRef, (snap) => {
+      const v = snap.val();
+      if (!v) return;
+      if (Number.isFinite(v.sensor1) && Number.isFinite(v.sensor2)) {
+        if (!v.timestamp) v.timestamp = new Date().toISOString();
+        this._listeners.forEach((cb) => cb(v));
+      }
+    }, (err) => this._setStatus({ status: 'error', online: false, error: String(err?.message || err) }));
+    this._unsubStatus = onValue(statusRef, (snap) => {
+      const s = snap.val() || {};
+      this._setStatus({ status: 'connected', online: !!s.online, last_seen: s.last_seen, broker: 'firebase-rtdb' });
+    });
+    this._setStatus({ status: 'connected', online: false, broker: 'firebase-rtdb' });
+  }
+
+  publishCommand(type, value = null) {
+    if (!isFirebaseConfigured()) return false;
+    const fb = getFirebase();
+    const cmdRef = ref(fb.db, `devices/${this.deviceId}/cmd`);
+    return push(cmdRef, { type, value, ts: serverTimestamp() })
+      .then(() => true)
+      .catch(() => false);
+  }
+  triggerExcursion() { return this.publishCommand('excursion_test'); }
+  setSetpoint(v) { return this.publishCommand('setpoint', v); }
+
+  stop() {
+    if (this._unsub) { try { this._unsub(); } catch {} }
+    if (this._unsubStatus) { try { this._unsubStatus(); } catch {} }
+    this._unsub = null; this._unsubStatus = null;
+    this._setStatus({ status: 'stopped', online: false });
+  }
 }
 
 export function createDataSource(mode, opts) {

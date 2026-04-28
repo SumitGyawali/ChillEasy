@@ -33,8 +33,8 @@ function DeviceLinkCard() {
       <div className="text-xs mt-2" style={{ color: 'var(--vx-text-dim)' }}>
         {settings.source === 'mqtt' && 'Subscribed to telemetry topic; commands published over WebSocket.'}
         {settings.source === 'http' && 'Polling backend ingest endpoint; commands queued for NodeMCU long-poll.'}
-        {settings.source === 'simulator' && 'Simulator mode — start a session in MQTT or HTTP mode to talk to a real NodeMCU.'}
-        {settings.source === 'firebase' && 'Configure Firebase credentials in src/lib/dataSource.js to activate.'}
+        {settings.source === 'simulator' && 'Simulator mode — start a session in MQTT, HTTP, or Firebase mode to talk to a real NodeMCU.'}
+        {settings.source === 'firebase' && 'Firebase Realtime DB mode — subscribed to devices/{id}/telemetry/live; commands pushed to devices/{id}/cmd.'}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
@@ -88,7 +88,7 @@ export default function SettingsPanel() {
                 <SelectItem value="simulator">Simulator</SelectItem>
                 <SelectItem value="mqtt">MQTT (NodeMCU live)</SelectItem>
                 <SelectItem value="http">HTTP (NodeMCU REST)</SelectItem>
-                <SelectItem value="firebase">Firebase (configure)</SelectItem>
+                <SelectItem value="firebase">Firebase Realtime DB</SelectItem>
               </SelectContent>
             </Select>
           </Field>
