@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -72,6 +72,9 @@ export default function DeviceDeployQR() {
       <DialogContent className="bg-[#161A22] border-[#232B36] text-white max-w-xl" data-testid="device-deploy-dialog">
         <DialogHeader>
           <DialogTitle style={{ fontFamily: 'Barlow' }}>Deploy NodeMCU · {settings.device.id}</DialogTitle>
+          <DialogDescription className="text-[#94A3B8] text-xs">
+            Scan this QR with the NodeMCU's captive portal to provision broker, topic, ingest URL, and credentials.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
