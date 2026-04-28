@@ -6,6 +6,7 @@ import { Switch } from './ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Button } from './ui/button';
 import { Settings as SettingsIcon, Zap, Cloud, Radio, Send } from 'lucide-react';
+import DeviceDeployQR from './DeviceDeployQR';
 
 function DeviceLinkCard() {
   const { settings, sendCommand, linkStatus, running } = useSession();
@@ -20,11 +21,14 @@ function DeviceLinkCard() {
           <Radio size={16} style={{ color: 'var(--vx-primary)' }} />
           <h3 className="text-sm font-semibold tracking-wide" style={{ fontFamily: 'Barlow' }}>NODEMCU DEVICE LINK</h3>
         </div>
-        <span className="vx-chip" data-testid="device-link-status">
-          <span className={`vx-pulse-dot ${dotClass}`} />
-          {(linkStatus.status || 'idle').toUpperCase()}
-          {linkStatus.broker ? ` · ${linkStatus.broker.split('://')[1]}` : ''}
-        </span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="vx-chip" data-testid="device-link-status">
+            <span className={`vx-pulse-dot ${dotClass}`} />
+            {(linkStatus.status || 'idle').toUpperCase()}
+            {linkStatus.broker ? ` · ${linkStatus.broker.split('://')[1]}` : ''}
+          </span>
+          <DeviceDeployQR />
+        </div>
       </div>
       <div className="text-xs mt-2" style={{ color: 'var(--vx-text-dim)' }}>
         {settings.source === 'mqtt' && 'Subscribed to telemetry topic; commands published over WebSocket.'}

@@ -1,4 +1,5 @@
 from fastapi import FastAPI, APIRouter, HTTPException
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -17,9 +18,6 @@ load_dotenv(ROOT_DIR / '.env')
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
-
-app = FastAPI(title="VaxChain Monitor API")
-api_router = APIRouter(prefix="/api")
 
 
 # ===================== Models =====================
@@ -53,7 +51,7 @@ class TelemetryBatch(BaseModel):
 class SessionCreate(BaseModel):
     vaccine_id: str
     setpoint_c: float = 5.0
-    destination: Optional[Dict[str, float]] = None  # {lat, lng, radius_m}
+    destination: Optional[Dict[str, float]] = None
     notes: Optional[str] = None
 
 
@@ -70,12 +68,21 @@ class Session(BaseModel):
     summary: Optional[Dict[str, Any]] = None
 
 
+class SessionUpdate(BaseModel):
+    """Whitelisted fields the client can update on an existing session."""
+    model_config = ConfigDict(extra="forbid")
+    ended_at: Optional[str] = None
+    notes: Optional[str] = None
+    summary: Optional[Dict[str, Any]] = None
+    destination: Optional[Dict[str, float]] = None
+
+
 class AlertItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str
     type: str
-    severity: str  # info | warning | critical
+    severity: str
     message: str
     payload: Optional[Dict[str, Any]] = None
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -90,7 +97,23 @@ class AlertCreate(BaseModel):
     payload: Optional[Dict[str, Any]] = None
 
 
-# ===================== Vaccine seeding =====================
+class DeviceCommand(BaseModel):
+    type: str
+    value: Optional[Any] = None
+
+
+class IngestPayload(BaseModel):
+    sensor1: float
+    sensor2: float
+    pwm_pct: float
+    battery_pct: float
+    lat: float
+    lng: float
+    timestamp: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+# ===================== Vaccines seed =====================
 
 DEFAULT_VACCINES = [
     {"id": "tetanus", "name": "Tetanus Toxoid", "platform": "Toxoid",
@@ -106,11 +129,26 @@ DEFAULT_VACCINES = [
 ]
 
 
-@app.on_event("startup")
-async def seed_vaccines():
-    existing = await db.vaccines.count_documents({})
-    if existing == 0:
+# ===================== Lifespan: seeding + indexes =====================
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Seed vaccines
+    if await db.vaccines.count_documents({}) == 0:
         await db.vaccines.insert_many([dict(v) for v in DEFAULT_VACCINES])
+    # Indexes for hot query paths
+    await db.telemetry.create_index([("session_id", 1), ("timestamp", 1)])
+    await db.alerts.create_index([("session_id", 1), ("timestamp", -1)])
+    await db.sessions.create_index([("started_at", -1)])
+    await db.device_telemetry.create_index([("device_id", 1), ("timestamp", -1)])
+    await db.device_commands.create_index([("device_id", 1), ("consumed", 1), ("created_at", 1)])
+    await db.devices.create_index([("id", 1)], unique=True)
+    yield
+    client.close()
+
+
+app = FastAPI(title="VaxChain Monitor API", lifespan=lifespan)
+api_router = APIRouter(prefix="/api")
 
 
 # ===================== Routes =====================
@@ -122,8 +160,7 @@ async def root():
 
 @api_router.get("/vaccines", response_model=List[Vaccine])
 async def list_vaccines():
-    docs = await db.vaccines.find({}, {"_id": 0}).to_list(100)
-    return docs
+    return await db.vaccines.find({}, {"_id": 0}).to_list(100)
 
 
 @api_router.post("/sessions", response_model=Session)
@@ -143,9 +180,8 @@ async def create_session(payload: SessionCreate):
 
 
 @api_router.get("/sessions", response_model=List[Session])
-async def list_sessions():
-    docs = await db.sessions.find({}, {"_id": 0}).sort("started_at", -1).to_list(200)
-    return docs
+async def list_sessions(limit: int = 200):
+    return await db.sessions.find({}, {"_id": 0}).sort("started_at", -1).to_list(limit)
 
 
 @api_router.get("/sessions/{session_id}", response_model=Session)
@@ -157,10 +193,12 @@ async def get_session(session_id: str):
 
 
 @api_router.patch("/sessions/{session_id}", response_model=Session)
-async def update_session(session_id: str, update: Dict[str, Any]):
-    update.pop("id", None)
+async def update_session(session_id: str, update: SessionUpdate):
+    patch = {k: v for k, v in update.model_dump(exclude_unset=True).items() if v is not None}
+    if not patch:
+        raise HTTPException(400, "No updatable fields provided")
     res = await db.sessions.find_one_and_update(
-        {"id": session_id}, {"$set": update},
+        {"id": session_id}, {"$set": patch},
         return_document=True, projection={"_id": 0},
     )
     if not res:
@@ -178,11 +216,21 @@ async def append_telemetry(session_id: str, batch: TelemetryBatch):
 
 
 @api_router.get("/sessions/{session_id}/telemetry", response_model=List[TelemetryPoint])
-async def get_telemetry(session_id: str, limit: int = 5000):
-    docs = await db.telemetry.find(
-        {"session_id": session_id}, {"_id": 0, "session_id": 0}
-    ).sort("timestamp", 1).to_list(limit)
-    return docs
+async def get_telemetry(
+    session_id: str,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    limit: int = 1000,
+    skip: int = 0,
+):
+    """Paginated, time-window query. Use since/until for windows; limit/skip for offsets."""
+    q: Dict[str, Any] = {"session_id": session_id}
+    if since or until:
+        q["timestamp"] = {}
+        if since: q["timestamp"]["$gte"] = since
+        if until: q["timestamp"]["$lte"] = until
+    cursor = db.telemetry.find(q, {"_id": 0, "session_id": 0}).sort("timestamp", 1).skip(skip).limit(min(limit, 5000))
+    return await cursor.to_list(min(limit, 5000))
 
 
 @api_router.post("/alerts", response_model=AlertItem)
@@ -194,8 +242,7 @@ async def create_alert(payload: AlertCreate):
 
 @api_router.get("/sessions/{session_id}/alerts", response_model=List[AlertItem])
 async def list_alerts(session_id: str):
-    docs = await db.alerts.find({"session_id": session_id}, {"_id": 0}).sort("timestamp", -1).to_list(500)
-    return docs
+    return await db.alerts.find({"session_id": session_id}, {"_id": 0}).sort("timestamp", -1).to_list(500)
 
 
 @api_router.patch("/alerts/{alert_id}/dismiss")
@@ -209,37 +256,18 @@ async def dismiss_alert(alert_id: str):
     return res
 
 
-# ===================== Device ingest + commands (HTTP fallback for NodeMCU) =====================
-
-class DeviceCommand(BaseModel):
-    type: str
-    value: Optional[Any] = None
-
-
-class IngestPayload(BaseModel):
-    sensor1: float
-    sensor2: float
-    pwm_pct: float
-    battery_pct: float
-    lat: float
-    lng: float
-    timestamp: Optional[str] = None
-    session_id: Optional[str] = None
-
+# ===================== Device ingest + commands =====================
 
 @api_router.post("/ingest/{device_id}")
 async def ingest_device(device_id: str, payload: IngestPayload):
-    """NodeMCU posts telemetry directly here when MQTT is unavailable."""
     doc = payload.model_dump()
     doc["device_id"] = device_id
     if not doc.get("timestamp"):
         doc["timestamp"] = datetime.now(timezone.utc).isoformat()
     await db.device_telemetry.insert_one(doc)
-    # Mirror into session telemetry collection too if session_id provided
     if doc.get("session_id"):
         sdoc = {k: v for k, v in doc.items() if k != "device_id"}
         await db.telemetry.insert_one(sdoc)
-    # Update device "seen" presence
     await db.devices.update_one(
         {"id": device_id},
         {"$set": {"id": device_id, "last_seen": doc["timestamp"], "last_payload": payload.model_dump()}},
@@ -258,7 +286,6 @@ async def device_telemetry(device_id: str, limit: int = 500):
 
 @api_router.post("/devices/{device_id}/commands")
 async def enqueue_command(device_id: str, cmd: DeviceCommand):
-    """UI enqueues a command for the NodeMCU device."""
     doc = {
         "id": str(uuid.uuid4()),
         "device_id": device_id,
@@ -273,16 +300,13 @@ async def enqueue_command(device_id: str, cmd: DeviceCommand):
 
 @api_router.get("/devices/{device_id}/commands")
 async def fetch_commands(device_id: str, consume: bool = True):
-    """NodeMCU polls this. With consume=true, marks returned commands as consumed."""
     cur = db.device_commands.find(
         {"device_id": device_id, "consumed": False}, {"_id": 0}
     ).sort("created_at", 1)
     docs = await cur.to_list(50)
     if consume and docs:
         ids = [d["id"] for d in docs]
-        await db.device_commands.update_many(
-            {"id": {"$in": ids}}, {"$set": {"consumed": True}}
-        )
+        await db.device_commands.update_many({"id": {"$in": ids}}, {"$set": {"consumed": True}})
     return {"commands": docs}
 
 
@@ -302,18 +326,23 @@ async def device_status(device_id: str):
 
 app.include_router(api_router)
 
+
+# ===================== CORS (env-driven, prod-safe) =====================
+# Production: set CORS_ORIGINS in backend/.env to a comma-separated list of allowed origins
+# (e.g., https://your-app.example.com). When credentials are sent, "*" is invalid per spec, so
+# we only enable allow_credentials when an explicit origin list is provided.
+
+_raw_cors = os.environ.get("CORS_ORIGINS", "*").strip()
+_origins = [o.strip() for o in _raw_cors.split(",") if o.strip()]
+_allow_credentials = _raw_cors != "*" and len(_origins) > 0
+
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_credentials=_allow_credentials,
+    allow_origins=_origins or ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
