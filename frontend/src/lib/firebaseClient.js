@@ -49,6 +49,11 @@ export function ensureAuth() {
       if (mode === 'anonymous') {
         signInAnonymously(fb.auth).catch((e) => { unsub(); reject(e); });
       }
+    }).catch((err) => {
+      // Allow a fresh retry on the NEXT call — e.g., after the user enables
+      // Anonymous sign-in in Firebase Console without a full page reload.
+      _ready = null;
+      throw err;
     });
   }
   return _ready;

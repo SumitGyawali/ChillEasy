@@ -1,34 +1,14 @@
-# Wiring `FirebaseAdapter` — what I need from you
+# Firebase setup — final 2 steps in the Firebase Console
 
-The slot lives at `/app/frontend/src/lib/dataSource.js` (`class FirebaseAdapter`). To activate it, please share the following — all values come from the **Firebase Console → Project Settings → General** and **Realtime Database** tabs.
+You've already provided the Web config. Two console toggles remain (no code changes needed on our side):
 
-## 1. Firebase Web App config (mandatory)
-The exact `firebaseConfig` object Google gives you when you "Add app → Web". I need every field below — they all come pasted together:
+## 1. Enable Anonymous sign-in
+1. Open https://console.firebase.google.com/project/chilleasy-842fc/authentication/providers
+2. Click **Anonymous** → toggle **Enable** → **Save**
 
-| Key              | Where to get it                                               |
-| ---------------- | ------------------------------------------------------------- |
-| `apiKey`         | Project settings → Web app config                             |
-| `authDomain`     | Project settings → Web app config                             |
-| `projectId`      | Project settings → Web app config                             |
-| `databaseURL`    | Realtime Database tab → Data → URL (e.g., `https://xxx.firebaseio.com` or `https://xxx-default-rtdb.<region>.firebasedatabase.app`) |
-| `storageBucket`  | Project settings → Web app config (only if you want hosted images later) |
-| `appId`          | Project settings → Web app config                             |
-| `messagingSenderId` | Project settings → Web app config                          |
-
-## 2. Realtime Database paths (mandatory)
-Confirm or override the defaults I'll use:
-- **Telemetry stream** path the NodeMCU writes to: `devices/{deviceId}/telemetry/live` (single object, overwritten each tick)
-- **Telemetry history** path (optional, for replays): `devices/{deviceId}/telemetry/history` (push-keyed list)
-- **Commands** path the NodeMCU listens on: `devices/{deviceId}/cmd`
-- **Status** path the NodeMCU writes presence to: `devices/{deviceId}/status` (`{online, last_seen}`)
-
-## 3. Auth model (pick one)
-- **a) Anonymous auth** — simplest; I call `signInAnonymously()` on adapter start. **Required**: enable *Authentication → Sign-in method → Anonymous*.
-- **b) Custom token** — backend mints short-lived tokens. **Required**: a Firebase service-account JSON for the backend (private key); I'll add `/api/firebase/token` that issues custom tokens.
-- **c) Open public DB** — only acceptable for demos. **Required**: confirm you accept open read/write rules.
-
-## 4. Database security rules
-A working starter set (paste into Firebase Console → Realtime Database → Rules):
+## 2. Set Realtime Database rules
+1. Open https://console.firebase.google.com/project/chilleasy-842fc/database/chilleasy-842fc-default-rtdb/rules
+2. Paste:
 ```json
 {
   "rules": {
@@ -43,33 +23,23 @@ A working starter set (paste into Firebase Console → Realtime Database → Rul
   }
 }
 ```
-If you want stricter per-device tokens, share the claim shape (e.g., `auth.token.deviceId == $deviceId`).
+3. **Publish**.
 
-## 5. Firestore (optional — only if you want sessions/alerts mirrored there)
-- **Database location** (e.g., `nam5`, `eur3`)
-- Confirm collection names: `sessions`, `alerts`, `vaccines` (or override).
-- Same auth model decision as above.
-
-## 6. NodeMCU side — what changes on the device
-You'll either:
-- **Use the Firebase ESP-Client library** (`firebase-arduino-client` or `mobizt/Firebase-ESP-Client`) — needs `apiKey`, `databaseURL`, and an auth token (anonymous or service-account exchange).
-- Or keep MQTT/HTTP and let a **backend bridge** mirror to Firebase. Tell me which path you prefer; I'll update `/app/firmware/vaxchain_nodemcu.ino` accordingly.
-
----
-
-## Drop-in template
-Reply with the values filled in, and I'll do the rest in a single iteration:
-
-```env
-# /app/frontend/.env (do NOT delete REACT_APP_BACKEND_URL or WDS_SOCKET_PORT)
-REACT_APP_FB_API_KEY=
-REACT_APP_FB_AUTH_DOMAIN=
-REACT_APP_FB_PROJECT_ID=
-REACT_APP_FB_DATABASE_URL=
-REACT_APP_FB_STORAGE_BUCKET=
-REACT_APP_FB_APP_ID=
-REACT_APP_FB_MESSAGING_SENDER_ID=
-REACT_APP_FB_AUTH_MODE=anonymous   # anonymous | custom | open
+## How to verify
+- In VaxChain Settings → Mode → select **Firebase Realtime DB** → click **Start**.
+- Top bar `LINK · CONNECTED · firebase-rtdb` chip turns green.
+- To inject a sample telemetry point so the dashboard updates, paste this into the RTDB console at path `devices/vx-001/telemetry/live`:
+```json
+{ "sensor1": 5.2, "sensor2": 5.1, "pwm_pct": 28, "battery_pct": 96, "lat": 12.97, "lng": 77.59, "timestamp": "2026-04-28T17:30:00Z" }
 ```
+The chamber gauge will update within ~1 second.
 
-Plus, paste the chosen security rules, the database location (Firestore region), and confirm the path layout above. That's everything I need.
+## NodeMCU side (optional)
+Two paths supported:
+- **a) Direct Firebase**: use `mobizt/Firebase-ESP-Client` library on ESP32, call `Firebase.RTDB.setJSON("devices/vx-001/telemetry/live", payload)` every 20s and listen on `devices/vx-001/cmd` for commands. Auth: anonymous via `Firebase.signInAnonymously(...)`.
+- **b) Backend bridge**: keep the current MQTT/HTTP firmware unchanged; we'll add a small Python worker that mirrors `db.device_telemetry` rows into RTDB (would be a future P4 ticket). Tell me if you want option (b) and I'll add it.
+
+## Auth model used
+- Frontend: signInAnonymously via Firebase JS SDK on first session start.
+- DB writes/reads: gated on `auth != null` (any anonymous session works).
+- For production, swap to **custom token** auth: backend mints a Firebase custom token tied to the VaxChain JWT user; rules can then check `auth.token.user_id` or `auth.token.deviceId`. Ping me to wire this when you're ready.
