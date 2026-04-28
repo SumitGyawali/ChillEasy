@@ -1,7 +1,10 @@
 // Firebase client — initialised on demand (so simulator/MQTT/HTTP modes don't pay the cost).
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getDatabase } from 'firebase/database';
+import axios from 'axios';
+
+const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const firebaseConfig = {
   apiKey: process.env.REACT_APP_FB_API_KEY,
@@ -33,7 +36,8 @@ export function getFirebase() {
  * Ensures a Firebase auth session is active before the first DB read/write.
  * Modes:
  *   - anonymous (default): signInAnonymously
- *   - custom: caller must have already signed in (no-op)
+ *   - custom: fetch a Firebase custom token from backend (/api/firebase/token,
+ *             requires VaxChain JWT) and signInWithCustomToken
  *   - open: skip auth (DB rules must allow public)
  */
 export function ensureAuth() {
@@ -48,10 +52,12 @@ export function ensureAuth() {
       });
       if (mode === 'anonymous') {
         signInAnonymously(fb.auth).catch((e) => { unsub(); reject(e); });
+      } else if (mode === 'custom') {
+        axios.post(`${API}/firebase/token`)
+          .then((r) => signInWithCustomToken(fb.auth, r.data.firebase_token))
+          .catch((e) => { unsub(); reject(e); });
       }
     }).catch((err) => {
-      // Allow a fresh retry on the NEXT call — e.g., after the user enables
-      // Anonymous sign-in in Firebase Console without a full page reload.
       _ready = null;
       throw err;
     });

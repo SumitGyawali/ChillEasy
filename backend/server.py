@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Depends
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -155,6 +155,9 @@ async def lifespan(_: FastAPI):
     await db.devices.create_index([("id", 1)], unique=True)
     await db.users.create_index([("email", 1)], unique=True)
     await db.user_sessions.create_index([("session_token", 1)], unique=True)
+    # Firebase bridge — opt-in (no-op if FIREBASE_SERVICE_ACCOUNT_JSON missing)
+    import firebase_bridge
+    firebase_bridge.init()
     yield
     client.close()
 
@@ -163,9 +166,28 @@ app = FastAPI(title="VaxChain Monitor API", lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
 
 # Auth + provisioning
-from auth import build_auth_router, provisioning_router
+from auth import build_auth_router, provisioning_router, make_auth_dep, User
 app.include_router(build_auth_router(db))
 app.include_router(provisioning_router)
+
+
+# ===================== Firebase custom-token endpoint =====================
+firebase_router = APIRouter(prefix="/api/firebase")
+_auth_dep = make_auth_dep(db, required=True)
+
+@firebase_router.post("/token")
+async def firebase_custom_token(user: User = Depends(_auth_dep)):
+    """Mint a Firebase custom token for the logged-in VaxChain user.
+    Frontend uses this when REACT_APP_FB_AUTH_MODE=custom."""
+    import firebase_bridge
+    token = firebase_bridge.mint_custom_token(user.user_id, {"email": user.email, "name": user.name or ""})
+    if not token:
+        raise HTTPException(503, "Firebase admin not configured on server")
+    return {"firebase_token": token, "user_id": user.user_id}
+
+
+from fastapi import Depends  # placed here to keep diff minimal
+app.include_router(firebase_router)
 
 
 # ===================== Routes =====================
@@ -290,6 +312,11 @@ async def ingest_device(device_id: str, payload: IngestPayload):
         {"$set": {"id": device_id, "last_seen": doc["timestamp"], "last_payload": payload.model_dump()}},
         upsert=True,
     )
+    # Firebase bridge mirror — no-op if not configured
+    import firebase_bridge
+    mirror_payload = {k: v for k, v in payload.model_dump().items() if v is not None}
+    firebase_bridge.mirror_telemetry(device_id, mirror_payload)
+    firebase_bridge.mirror_status(device_id, True, doc["timestamp"])
     return {"ok": True}
 
 
@@ -312,6 +339,9 @@ async def enqueue_command(device_id: str, cmd: DeviceCommand):
         "consumed": False,
     }
     await db.device_commands.insert_one(doc)
+    # Firebase bridge mirror — no-op if not configured
+    import firebase_bridge
+    firebase_bridge.mirror_command(device_id, {"type": cmd.type, "value": cmd.value, "id": doc["id"], "created_at": doc["created_at"]})
     return {"id": doc["id"], "queued": True}
 
 

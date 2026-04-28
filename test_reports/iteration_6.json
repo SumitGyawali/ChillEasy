@@ -1,0 +1,43 @@
+{
+  "summary": "Iter6 — Firebase custom-token endpoint + Option-B bridge fully validated. Backend 45/45 pytest pass (39 prior + 6 new firebase bridge tests). New /api/firebase/token correctly returns 401 unauth, 503 with JWT (no SA), and 503 with cookie-session (no SA) — all graceful. Bridge mirror calls inside /api/ingest and /api/devices/{id}/commands are no-op when FIREBASE_SERVICE_ACCOUNT_JSON is empty: both endpoints still return 200 and persist to MongoDB. Frontend regression OK: QA password login → dashboard renders with no console errors; Settings → Firebase Realtime DB → Start session shows graceful link-status='ERROR' (Anonymous auth disabled — expected); all three cmd buttons (cmd-setpoint-btn, cmd-excursion-btn, cmd-reset-btn) now correctly POST to /api/devices/vx-001/commands (Option-B bridge confirmed via network interception) and toast 'Command sent: …' fires. Default REACT_APP_FB_AUTH_MODE=anonymous → /api/firebase/token is NOT called from FE, as designed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Firebase Realtime DB happy path (live telemetry + token mode)", "issue": "MOCKED — Firebase service account JSON is empty in backend/.env and Anonymous sign-in is disabled in Firebase Console → cannot assert RTDB write/read or signInWithCustomToken roundtrip. Verified only the GRACEFUL paths: link-status='ERROR' chip, /api/firebase/token → 503, ingest/commands → 200 with no-op bridge.", "affected_selectors": ["[data-testid=device-link-status]", "[data-testid=cmd-setpoint-btn]"]}
+    ],
+    "design_issues": [
+      {"screen": "Live Monitor (initial render before any data)", "issues": ["Recharts logs ResponsiveContainer width(-1) height(-1) warnings 4× on first paint — pre-existing, harmless, but worth a minHeight."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_firebase_bridge.py",
+    "/app/backend/tests/test_p3_auth_provisioning.py",
+    "/app/backend/tests/test_device_ingest.py",
+    "/app/backend/tests/test_p1_hardening.py",
+    "/app/backend/tests/test_vaxchain_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(User action, not code) To exercise the Firebase happy-path: paste real Firebase service-account JSON into FIREBASE_SERVICE_ACCOUNT_JSON in /app/backend/.env (single-line literal) AND enable Anonymous sign-in in Firebase Console for project chilleasy-842fc AND set RTDB rules to allow auth!=null. Then /api/firebase/token will return a real custom token and bridge mirror writes will land in RTDB.",
+    "(Optional, low priority) Consider returning 200 with {firebase_enabled:false} from /api/firebase/token instead of 503 — would simplify FE error handling for the 'admin not configured' case which is operationally normal in dev.",
+    "(Optional) Persisted issue from iter5: firebaseClient.ensureAuth() caches rejected promise in module scope — after enabling Anonymous auth in Console, app must hard-reload. One-line fix: null out _ready on rejection."
+  ],
+  "critical_code_review_comments": [
+    "server.py line 189: `from fastapi import Depends` redundant import inside the file (Depends is already imported at top). Cosmetic only.",
+    "server.py: firebase_bridge is `import`ed inside route handlers (lines 316, 343) on every request — minor perf/style; consider hoisting to module top since the bridge gracefully no-ops anyway.",
+    "firebase_bridge.mirror_telemetry pushes a history entry to RTDB on EVERY ingest (line 82) — when SA is configured this could explode RTDB storage at the 1Hz NodeMCU rate. Recommend either capping with a TTL/max-children rule or only pushing on threshold-cross events.",
+    "firebase_bridge.init() catches all exceptions silently — fine for graceful no-op, but if SA env-var is malformed JSON it logs a WARNING then never retries (because _initialized_attempted=True). After fixing the env, backend must be restarted. Document this in firebase_setup.md.",
+    "/api/firebase/token mints a token with email+name claims but no expiry — Firebase custom tokens default to 1 hour TTL; that's fine, but FE has no refresh logic. When the iter7 user enables custom mode in production, they'll need to handle re-mint on token expiry."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_firebase_bridge.py (NEW)"
+  ],
+  "success_rate": {"backend": "100% (45/45 pytest passing — 39 prior + 6 new firebase bridge tests)", "frontend": "100% on Iter6 scope: login, mode switch, session start, 3× cmd POST verified via network interception, graceful link-status ERROR, no JS exceptions"},
+  "test_credentials": "qa@vaxchain.test / Passw0rd!",
+  "seed_data_creation": "Hand-seeded one user_sessions row in MongoDB with TEST_cookie_<uuid> session_token to exercise cookie-auth path of /api/firebase/token (deleted in fixture teardown).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter6 is fully green in the no-SA configuration. To validate Iter7 (Firebase happy path): (1) put a real service-account JSON in backend/.env FIREBASE_SERVICE_ACCOUNT_JSON, (2) restart backend (sudo supervisorctl restart backend), (3) re-run pytest backend/tests/test_firebase_bridge.py — the 503 token tests will need to be inverted (assert 200 + decoded token), and the bridge no-op tests should remain green (now also writing to RTDB which is a side-effect, not asserted). For FE custom-mode validation: set REACT_APP_FB_AUTH_MODE=custom in frontend/.env, restart frontend, log in with QA, switch to Firebase mode, start session — should see exactly one POST to /api/firebase/token followed by signInWithCustomToken, then telemetry stream should populate. Test reproduction for backend: `set -a && . frontend/.env && . backend/.env && set +a && pytest backend/tests/ -v --junitxml=/app/test_reports/pytest/pytest_results.xml`. Note the NEW test file uses BASE_URL/MONGO_URL/DB_NAME from env — don't run without sourcing them.",
+  "rca of the issue": "N/A — no bugs found. Iter6 backend bridge + custom-token endpoint behave exactly as designed in the no-service-account configuration: every code path either gracefully no-ops (mirror_*, mint_custom_token returns None) or surfaces a clean 503 from /api/firebase/token. The frontend FirebaseAdapter.publishCommand refactor to POST through /api/devices/{id}/commands is verified end-to-end: 3/3 cmd buttons fire the POST with the correct {type,value} body and trigger the success toast. The 'ERROR' link-status chip is the expected surfacing of signInAnonymously rejection (Firebase project Anonymous provider disabled), not a bug — the rest of the FirebaseAdapter still attaches its session and the cmd path works because it bypasses RTDB entirely (Option-B design). The only environmental prerequisite to flip everything green-green is uploading a real Firebase service account JSON; instructions live in /app/memory/firebase_setup.md per the agent_to_agent_context_note."
+}

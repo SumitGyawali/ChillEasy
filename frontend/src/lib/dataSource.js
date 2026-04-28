@@ -268,10 +268,9 @@ export class FirebaseAdapter {
   }
 
   publishCommand(type, value = null) {
-    if (!isFirebaseConfigured()) return false;
-    const fb = getFirebase();
-    const cmdRef = ref(fb.db, `devices/${this.deviceId}/cmd`);
-    return push(cmdRef, { type, value, ts: serverTimestamp() })
+    // Option-B bridge: route commands through backend so MQTT/HTTP devices receive them too.
+    // Backend will additionally mirror the command to RTDB devices/{id}/cmd for direct-FB devices.
+    return axios.post(`${API}/devices/${this.deviceId}/commands`, { type, value })
       .then(() => true)
       .catch(() => false);
   }
